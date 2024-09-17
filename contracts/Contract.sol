@@ -9,34 +9,21 @@ import {VRFV2PlusClient} from "@chainlink/contracts/src/v0.8/vrf/dev/libraries/V
 
 contract BaseROSCA is ReentrancyGuard, VRFConsumerBaseV2Plus {
     
-    constructor(uint256 _slots, uint256 _maxContributionAmount, uint256 _feeBasisPoints, uint256 _duration, uint256 subscriptionId) VRFConsumerBaseV2Plus(vrfCoordinator) {
+    constructor(uint256 subscriptionId) VRFConsumerBaseV2Plus(vrfCoordinator) {
 
         // vrf
         s_subscriptionId = subscriptionId;
         // 51624121128218574993867206953409889168951677118151954112797997374876714226754
         // 1000000000000000000000
+        // 100000000000000000000
         admin = msg.sender;
         baseContractUSDC = IERC20(0xA755f72E3106C7e59D269A2FB0Bacb5a5373fC6A);
-        
-        currentRound = 0;
-        statusROSCA = true;
-        slots = _slots;
-        slotsLeft = _slots;
-        maxContributionAmount = _maxContributionAmount * 10**18;
-        fullROSCPot = _slots * _maxContributionAmount * 10**18;
-        fees = _feeBasisPoints * _maxContributionAmount * 10**16 ;
-        duration = _duration;
 
-        insuranceBudget = 0;
+        // 0x12D87aB8e8be373a3D0d5EbE5068CC746631BD11 kuri
+        // 0xefd84859D135A919F70374c3B48505F8f2330ACb chit
+        // 0x69826057705d056e2E5DBFCB1e21C879D6eD4A73 rosc
+        // 100000000000000000000
 
-        kickoffTime = block.timestamp;
-        for(uint256 i = 1; i <= slots; i++){
-            uint256 j = i-1;
-            kickoffTimeforRound[i] = kickoffTime + (j * _duration);
-            deadlineforRound[i] = kickoffTime + (i * _duration); // - 1 days sunday prize 
-        }
-
-        discountOfferedforRound[0] = 0;
     }
 
     // ==xxxxxxx=========xxxxxxx=========xxxxxxx=========xxxxxxx== //
@@ -53,25 +40,19 @@ contract BaseROSCA is ReentrancyGuard, VRFConsumerBaseV2Plus {
         require(statusROSCA, "No active ROSCA rn!!");
         _;
     }
-    modifier deadlineWindow(){
-        require(deadlineforRound[currentRound] > block.timestamp, "Deadline for this round has passed, sorry!!");
+    modifier withinDeadlineWindow(){
+        require( block.timestamp < deadlineforRound[currentRound], "Deadline for this round has passed, sorry!!");
         _;
     }
-    modifier kickoffWindow(){
-        require(kickoffTimeforRound[currentRound] < block.timestamp, "It's not time for the round to start yet, sorry!!");
+    modifier outsideDeadlineWindow(){
+        require( block.timestamp > deadlineforRound[currentRound], "Deadline for this round has not passed, please try after sometime!!");
         _;
     }
-
-    // insurance budget - > anyone
-    function securityGuarantee() external nonReentrant{
-
-        
-        uint256 insuranceContribution = 10 * 10**18;
-
-        insuranceBudget += insuranceContribution;
-        require(baseContractUSDC.transferFrom(msg.sender, address(this), insuranceContribution), "Transaction failed !!");
-    }
-
+    
+    // modifier kickoffWindow(){
+    //     require( block.timestamp > kickoffTimeforRound[currentRound], "It's not time for the round to start yet, sorry!!");
+    //     _;
+    // }
 
 
     // ==xxxxxxx=========xxxxxxx=========xxxxxxx=========xxxxxxx== //
@@ -82,34 +63,45 @@ contract BaseROSCA is ReentrancyGuard, VRFConsumerBaseV2Plus {
 
 
     // give access/allowlist user
-    function vettUser(address _userAddress, string calldata _username) external onlyAdmin{
+    function vettUser(address _userAddress, string calldata _username) external nonReentrant onlyAdmin{
         isAllowed[_userAddress] = true;
         username[_userAddress] = _username;    
     }
 
     // start ROSCA instence
-    function startROSCAInstance(uint256 _slots, uint256 _maxContributionAmount, uint256 _feeBasisPoints, uint256 _duration) external onlyAdmin{
+    function startROSCAInstance(uint256 _slots, uint256 _maxContributionAmount, uint256 _feeBasisPoints, uint256 _duration) external nonReentrant onlyAdmin{
 
+        require(!statusROSCA,"There is another ROSCA active !!");
         currentRound = 0;
         statusROSCA = true;
-        
+
         slots = _slots;
         slotsLeft = _slots;
         maxContributionAmount = _maxContributionAmount * 10**18;
         fullROSCPot = _slots * _maxContributionAmount * 10**18;
-        fees = _feeBasisPoints * _maxContributionAmount * 10**16 ;
+        fees = _feeBasisPoints * _maxContributionAmount * 10**14 ;
         duration = _duration;
 
         insuranceBudget = 0;
 
         kickoffTime = block.timestamp;
         for(uint256 i = 1; i <= slots; i++){
-            uint256 j = i-1;
-            kickoffTimeforRound[i] = kickoffTime + (j * _duration);
+            uint256 z = i-1;
+            kickoffTimeforRound[i] = kickoffTime + (z * _duration);
             deadlineforRound[i] = kickoffTime + (i * _duration); // - 1 days sunday prize 
+            prizeMoneyCalledorNot[i] = false;
         }
-
         discountOfferedforRound[0] = 0;
+    }
+
+    // insurance budget - > anyone?
+    function securityGuarantee() external nonReentrant onlyAdmin{
+
+        
+        uint256 insuranceContribution = fullROSCPot;
+
+        insuranceBudget += insuranceContribution;
+        require(baseContractUSDC.transferFrom(msg.sender, address(this), insuranceContribution), "Transaction failed !!");
     }
 
 
@@ -160,7 +152,6 @@ contract BaseROSCA is ReentrancyGuard, VRFConsumerBaseV2Plus {
 
         updateDueCertificate(msg.sender);
     }
-
     function updateDueCertificate(address _clearoor) internal {
         userDuesPending[_clearoor] = 0;
         userNoDueCertificate[_clearoor] = true;
@@ -168,7 +159,7 @@ contract BaseROSCA is ReentrancyGuard, VRFConsumerBaseV2Plus {
 
     // contribute
     // ==========
-    function contribute() external activeROSCA deadlineWindow nonReentrant{
+    function contribute() external activeROSCA withinDeadlineWindow nonReentrant{
 
         contributionCchecklist(msg.sender, currentRound);
         uint256 payorContribution =  calculateContributionAmountforParticipant(msg.sender, currentRound);
@@ -178,6 +169,7 @@ contract BaseROSCA is ReentrancyGuard, VRFConsumerBaseV2Plus {
     }
     
     function contributionCchecklist(address _contributoor, uint256 _roundNumber) internal view {
+        require(_roundNumber > 0 && _roundNumber <= slots, "All rounds are completed.");
         require(isParticipant[_contributoor], "You are not part of this ROSCA, sorry!!");
         require(userNoDueCertificate[_contributoor], "You need to clear dues to be eligible to contribute!!");
         require(userDuesPending[_contributoor] == 0, "You need to clear dues to be eligible to contribute!!");
@@ -203,10 +195,11 @@ contract BaseROSCA is ReentrancyGuard, VRFConsumerBaseV2Plus {
 
     // bid
     // ===
-    function bid(uint256 _bid) external activeROSCA deadlineWindow nonReentrant{
+    function bid(uint256 _bid) external activeROSCA withinDeadlineWindow nonReentrant{
         biddingChecklist(msg.sender, currentRound);
 
-        require( _bid <= 24 && _bid > winningBidforRound[currentRound], " 1% <= bid >= 24% || new bids > highest bids");
+        require( _bid <= 24, "Bidding Range:  1% to 24%");
+        require(_bid > winningBidforRound[currentRound], "new bids should be higher than the highest bid");
         if(_bid > winningBidforRound[currentRound]){
             winningBidforRound[currentRound] = _bid;
             winnerWinner = msg.sender;
@@ -216,7 +209,7 @@ contract BaseROSCA is ReentrancyGuard, VRFConsumerBaseV2Plus {
     }
     
     function biddingChecklist(address _biddoor, uint256 _roundNumber) internal view {
-        require(_roundNumber > 0 && _roundNumber < slots, "No bidding for the last round & none before the first!!");
+        require(_roundNumber > 0 && _roundNumber < Participants.length, "No bidding for the last round!!");
         require(isParticipant[_biddoor], "you are not enrolled for this fund !!");
         require(!hasWon[_biddoor], "uh-oh! winners cannot bid, sorry !!");
         require(hasPaidRound[_biddoor][_roundNumber], "complete payment for the round to bid the pot !!");
@@ -267,15 +260,17 @@ contract BaseROSCA is ReentrancyGuard, VRFConsumerBaseV2Plus {
     // ==========
     function startLoop() external activeROSCA{
 
-        currentRound++;
-
+        // make sure it's called only once for each round timestamps
         loopChecklist(currentRound); // timekeeping
+        currentRound++;
         initializeVariablesforRound(currentRound);
     }
 
     function loopChecklist(uint256 _roundNumber) internal view{
+        require(_roundNumber < slots, "All rounds are completed.");
         // checklist make sure enrolments are complete before round 1
-        require(kickoffTimeforRound[_roundNumber] < block.timestamp, "It's not time for the round to start yet, sorry!!");
+        uint256 nextRound = _roundNumber + 1;
+        require( block.timestamp > kickoffTimeforRound[nextRound], "It's not time for the round to start yet, sorry!!");
     }
 
     function initializeVariablesforRound(uint256 _roundNumber) internal {
@@ -314,13 +309,13 @@ contract BaseROSCA is ReentrancyGuard, VRFConsumerBaseV2Plus {
 
     function calculateContributionAmountforRound(uint256 _roundNumber) internal view returns(uint256){
         uint256 fullDueAmountforRound = fullROSCPot - totalContributionforRound[_roundNumber];
-        uint256 contributionDueforNonDefaultedParticipants = fullDueAmountforRound / slots; 
+        uint256 contributionDueforNonDefaultedParticipants = fullDueAmountforRound / Participants.length; 
         return contributionDueforNonDefaultedParticipants;
     }
 
     // prize, winner and penalties
     // ===========================
-    function prizeMoney() external activeROSCA{
+    function prizeMoney() external outsideDeadlineWindow activeROSCA nonReentrant{
         
         prizeMoneyChecklist(currentRound);
         // insurance
@@ -343,10 +338,14 @@ contract BaseROSCA is ReentrancyGuard, VRFConsumerBaseV2Plus {
         // fees
         collectProtocolFees(currentRound);
 
+        prizeMoneyCalledorNot[currentRound] = true;
+
     }
 
     function prizeMoneyChecklist(uint256 _roundNumber) internal view {
-        require(deadlineforRound[_roundNumber] < block.timestamp, "Round deadline has not passed yet!!");
+        require(_roundNumber <= slots, "All rounds are completed.");
+        require(block.timestamp > deadlineforRound[_roundNumber], "Round deadline has not passed yet!!");
+        require(!prizeMoneyCalledorNot[_roundNumber], "Already called prizeMoney once for this round!!");
     }
     function defaultsPenaltiesInsurance(uint256 _roundNumber) internal returns(uint256 _insuranceClaimAmount){
         // penalties in a different function
@@ -369,7 +368,7 @@ contract BaseROSCA is ReentrancyGuard, VRFConsumerBaseV2Plus {
     }
     function winnerSelector(uint256 _roundNumber) internal returns (address){
         // if last round -> last man standing // any bids -> highest bidder // no bids -> raffle among !hasWon
-        if (_roundNumber == slots){
+        if (_roundNumber == Participants.length){
             // winnerWinner = Participants.!hasWon;
             address lastManStanding;
             for(uint256 i = 0; i < Participants.length; i++){
@@ -396,7 +395,6 @@ contract BaseROSCA is ReentrancyGuard, VRFConsumerBaseV2Plus {
             return chainlinkRaffleWinner;
         }
     }
-    // chainlink VRF
     function randomRandom() internal returns(uint256 requestId) {
         requestId = s_vrfCoordinator.requestRandomWords(
         VRFV2PlusClient.RandomWordsRequest({
@@ -409,14 +407,13 @@ contract BaseROSCA is ReentrancyGuard, VRFConsumerBaseV2Plus {
             extraArgs: VRFV2PlusClient._argsToBytes(VRFV2PlusClient.ExtraArgsV1({nativePayment: false}))
         })
     );
-    }
+    } // chainlink VRF
     function fulfillRandomWords(uint256 requestId, uint256[] calldata randomWords) internal override {
 
         uint256 indexofWinner = randomWords[0] % Rafflelist.length;
 
         chainlinkRaffleWinner = Rafflelist[indexofWinner];
     }
-
     function collectProtocolFees(uint256 _roundNumber) internal {
         uint256 tokenBalance = baseContractUSDC.balanceOf(address(this));
         require(tokenBalance >= fees, "Not enough funds!!");
@@ -428,6 +425,7 @@ contract BaseROSCA is ReentrancyGuard, VRFConsumerBaseV2Plus {
     // ==xxxxxxx=========xxxxxxx=========xxxxxxx=========xxxxxxx== //
 
     // ==xxxxxxx=========xxxxxxx=========xxxxxxx=========xxxxxxx== //
+
     
     // variables
 
@@ -454,7 +452,6 @@ contract BaseROSCA is ReentrancyGuard, VRFConsumerBaseV2Plus {
     mapping(address => bool) public userNoDueCertificate;
 
     mapping(uint256 => uint256) public deadlineforRound;
-    mapping(uint256 => bool) public contributionforRound;
     mapping(address => mapping(uint256 => bool)) public hasPaidRound;
     mapping(address => mapping(uint256 => bool)) public hasDefaultedRound;
     mapping(address => mapping(uint256 => bool)) public hasBidRound;
@@ -464,11 +461,12 @@ contract BaseROSCA is ReentrancyGuard, VRFConsumerBaseV2Plus {
 
     // ==xxxxxxx=========xxxxxxx=========xxxxxxx=========xxxxxxx== //
 
-    // owner variables
+    // admin variables
 
     uint256 public insuranceBudget;
     mapping(address => bool) public isAllowed;
     mapping(address => string) public username;
+    mapping(uint256 => bool) public prizeMoneyCalledorNot;
 
     // ==xxxxxxx=========xxxxxxx=========xxxxxxx=========xxxxxxx== //
 
@@ -500,7 +498,7 @@ contract BaseROSCA is ReentrancyGuard, VRFConsumerBaseV2Plus {
 
     // ==xxxxxxx=========xxxxxxx=========xxxxxxx=========xxxxxxx== //
 
-    // vrf variables
+    // chainlink vrf variables
 
     uint256 public s_subscriptionId;
     address public vrfCoordinator = 0x5C210eF41CD1a72de73bF76eC39637bB0d3d7BEE;
@@ -511,7 +509,7 @@ contract BaseROSCA is ReentrancyGuard, VRFConsumerBaseV2Plus {
 
     // ==xxxxxxx=========xxxxxxx=========xxxxxxx=========xxxxxxx== //
 
-
+    // optional rugpull
     function lockedFundsRugpull() external onlyAdmin{
         uint256 tokenBalance = baseContractUSDC.balanceOf(address(this));
         require(tokenBalance >= 0, "Not enough funds!!");
