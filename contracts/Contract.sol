@@ -340,6 +340,10 @@ contract BaseROSCA is ReentrancyGuard, VRFConsumerBaseV2Plus {
 
         prizeMoneyCalledorNot[currentRound] = true;
 
+        if (currentRound == slots){
+            statusROSCA = false;
+        }
+
     }
 
     function prizeMoneyChecklist(uint256 _roundNumber) internal view {
