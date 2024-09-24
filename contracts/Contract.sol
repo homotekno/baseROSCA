@@ -14,15 +14,10 @@ contract BaseROSCA is ReentrancyGuard, VRFConsumerBaseV2Plus {
         // vrf
         s_subscriptionId = subscriptionId;
         // 51624121128218574993867206953409889168951677118151954112797997374876714226754
-        // 1000000000000000000000
-        // 100000000000000000000
+        
         admin = msg.sender;
-        baseContractUSDC = IERC20(0xA755f72E3106C7e59D269A2FB0Bacb5a5373fC6A);
+        baseContractUSDC = IERC20(0x42F253D3E3Ee7Dd8676DE6075c15A252879FA9cF);
 
-        // 0x12D87aB8e8be373a3D0d5EbE5068CC746631BD11 kuri
-        // 0xefd84859D135A919F70374c3B48505F8f2330ACb chit
-        // 0x69826057705d056e2E5DBFCB1e21C879D6eD4A73 rosc
-        // 100000000000000000000
 
     }
 
@@ -96,7 +91,6 @@ contract BaseROSCA is ReentrancyGuard, VRFConsumerBaseV2Plus {
 
     // insurance budget - > anyone?
     function securityGuarantee() external nonReentrant onlyAdmin{
-
         
         uint256 insuranceContribution = fullROSCPot;
 
@@ -315,60 +309,22 @@ contract BaseROSCA is ReentrancyGuard, VRFConsumerBaseV2Plus {
 
     // prize, winner and penalties
     // ===========================
-    function prizeMoney() external outsideDeadlineWindow activeROSCA nonReentrant{
+    function prizeMoney() external activeROSCA nonReentrant{
         
         prizeMoneyChecklist(currentRound);
-        // insurance
-        insuranceClaimAmountforRound[currentRound] = defaultsPenaltiesInsurance(currentRound);
-        if(insuranceClaimAmountforRound[currentRound] > 0){
-            claimInsurance(currentRound, insuranceClaimAmountforRound[currentRound]);
-        }
-
-        prizeMoneyforRoundbeforeFees[currentRound] = totalContributionforRound[currentRound] + insuranceClaimAmountforRound[currentRound];
+        raffleCalledforRound[currentRound] == false;
         // winner
-        winnerforRound[currentRound]  = winnerSelector(currentRound);
-        hasWon[winnerforRound[currentRound]] = true;
-        participantWonRound[winnerforRound[currentRound]] = currentRound;
-        // discount
-        discountOfferedforRound[currentRound] = winningBidforRound[currentRound] * prizeMoneyforRoundbeforeFees[currentRound];
-        discountOfferedforRound[currentRound] /= 100;
-        // prize
-        prizeMoneyforRound[currentRound] = prizeMoneyforRoundbeforeFees[currentRound] - discountOfferedforRound[currentRound]- fees;
-        
-        // fees
-        collectProtocolFees(currentRound);
+        winnerforRound[currentRound] = winnerSelector(currentRound);
+        if (raffleCalledforRound[currentRound] == false){
 
-        prizeMoneyCalledorNot[currentRound] = true;
-
-        if (currentRound == slots){
-            statusROSCA = false;
+            fulfillPrizeWinnerInfo();
         }
-
     }
-
+    
     function prizeMoneyChecklist(uint256 _roundNumber) internal view {
         require(_roundNumber <= slots, "All rounds are completed.");
         require(block.timestamp > deadlineforRound[_roundNumber], "Round deadline has not passed yet!!");
         require(!prizeMoneyCalledorNot[_roundNumber], "Already called prizeMoney once for this round!!");
-    }
-    function defaultsPenaltiesInsurance(uint256 _roundNumber) internal returns(uint256 _insuranceClaimAmount){
-        // penalties in a different function
-        for(uint256 i = 0; i < Participants.length; i++){
-            if(!hasPaidRound[Participants[i]][_roundNumber]){
-                hasDefaultedRound[Participants[i]][_roundNumber] = true;
-                userDuesPending[Participants[i]] += maxContributionAmount;
-                userNoDueCertificate[Participants[i]] = false;
-                defaulterCountforRound[_roundNumber]++;
-            }
-        }
-        // add up defaults or full pot minus total contributions currentround ??
-        uint256 prizeShortage = fullROSCPot - totalContributionforRound[_roundNumber];  
-        return prizeShortage;
-    }
-    function claimInsurance(uint256 _roundNumber, uint256 _claimAmountInsurance) internal {
-        require(insuranceBudget > _claimAmountInsurance, "Not enough insurance budget!!");
-        insuranceBudget -= _claimAmountInsurance;
-        insuranceClaimStatusforRound[_roundNumber] = true;
     }
     function winnerSelector(uint256 _roundNumber) internal returns (address){
         // if last round -> last man standing // any bids -> highest bidder // no bids -> raffle among !hasWon
@@ -399,6 +355,52 @@ contract BaseROSCA is ReentrancyGuard, VRFConsumerBaseV2Plus {
             return chainlinkRaffleWinner;
         }
     }
+    function fulfillPrizeWinnerInfo() public {
+        // insurance
+        insuranceClaimAmountforRound[currentRound] = defaultsPenaltiesInsurance(currentRound);
+        if(insuranceClaimAmountforRound[currentRound] > 0){
+            claimInsurance(currentRound, insuranceClaimAmountforRound[currentRound]);
+        }
+
+        prizeMoneyforRoundbeforeFees[currentRound] = totalContributionforRound[currentRound] + insuranceClaimAmountforRound[currentRound];
+
+        hasWon[winnerforRound[currentRound]] = true;
+        participantWonRound[winnerforRound[currentRound]] = currentRound;
+        // discount
+        discountOfferedforRound[currentRound] = winningBidforRound[currentRound] * prizeMoneyforRoundbeforeFees[currentRound];
+        discountOfferedforRound[currentRound] /= 100;
+        // prize
+        prizeMoneyforRound[currentRound] = prizeMoneyforRoundbeforeFees[currentRound] - discountOfferedforRound[currentRound]- fees;
+        
+        // fees
+        collectProtocolFees(currentRound);
+
+        prizeMoneyCalledorNot[currentRound] = true;
+
+        if (currentRound == slots){
+            statusROSCA = false;
+            delete Rafflelist;
+        }
+    }
+    function defaultsPenaltiesInsurance(uint256 _roundNumber) internal returns(uint256 _insuranceClaimAmount){
+        // penalties in a different function
+        for(uint256 i = 0; i < Participants.length; i++){
+            if(!hasPaidRound[Participants[i]][_roundNumber]){
+                hasDefaultedRound[Participants[i]][_roundNumber] = true;
+                userDuesPending[Participants[i]] += maxContributionAmount;
+                userNoDueCertificate[Participants[i]] = false;
+                defaulterCountforRound[_roundNumber]++;
+            }
+        }
+        // add up defaults or full pot minus total contributions currentround ??
+        uint256 prizeShortage = fullROSCPot - totalContributionforRound[_roundNumber];  
+        return prizeShortage;
+    }
+    function claimInsurance(uint256 _roundNumber, uint256 _claimAmountInsurance) internal {
+        require(insuranceBudget > _claimAmountInsurance, "Not enough insurance budget!!");
+        insuranceBudget -= _claimAmountInsurance;
+        insuranceClaimStatusforRound[_roundNumber] = true;
+    }
     function randomRandom() internal returns(uint256 requestId) {
         requestId = s_vrfCoordinator.requestRandomWords(
         VRFV2PlusClient.RandomWordsRequest({
@@ -416,7 +418,8 @@ contract BaseROSCA is ReentrancyGuard, VRFConsumerBaseV2Plus {
 
         uint256 indexofWinner = randomWords[0] % Rafflelist.length;
 
-        chainlinkRaffleWinner = Rafflelist[indexofWinner];
+        winnerforRound[currentRound] = Rafflelist[indexofWinner];
+        
     }
     function collectProtocolFees(uint256 _roundNumber) internal {
         uint256 tokenBalance = baseContractUSDC.balanceOf(address(this));
@@ -424,6 +427,9 @@ contract BaseROSCA is ReentrancyGuard, VRFConsumerBaseV2Plus {
 
         require(baseContractUSDC.transfer(admin, fees), "Token transfer failed");
         feeCollectionStatusforRound[_roundNumber] = true;
+    }
+    function getParticipants() public view returns(address[] memory) {
+        return Participants;
     }
 
     // ==xxxxxxx=========xxxxxxx=========xxxxxxx=========xxxxxxx== //
@@ -507,18 +513,11 @@ contract BaseROSCA is ReentrancyGuard, VRFConsumerBaseV2Plus {
     uint256 public s_subscriptionId;
     address public vrfCoordinator = 0x5C210eF41CD1a72de73bF76eC39637bB0d3d7BEE;
     bytes32 public s_keyHash = 0x9e1344a1247c8a1785d0a4681a27152bffdb43666ae5bf7d14d24a5efd44bf71;
-    uint32 public callbackGasLimit = 40000;
+    uint32 public callbackGasLimit = 100000;
     uint16 public requestConfirmations = 3;
     uint32 public numWords = 1;
 
     // ==xxxxxxx=========xxxxxxx=========xxxxxxx=========xxxxxxx== //
-
-    // optional rugpull
-    function lockedFundsRugpull() external onlyAdmin{
-        uint256 tokenBalance = baseContractUSDC.balanceOf(address(this));
-        require(tokenBalance >= 0, "Not enough funds!!");
-        require(baseContractUSDC.transfer(admin, tokenBalance), "Token transfer failed");
-    }
 
 
     // ==xxxxxxx=========xxxxxxx=========xxxxxxx=========xxxxxxx== //
